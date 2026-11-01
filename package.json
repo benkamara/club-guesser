@@ -1,0 +1,12 @@
+{
+  "name": "club-guesser",
+  "version": "0.1.0",
+  "description": "Guess the football club from a growing list of its players.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js",
+    "build-dataset": "node scripts/build-dataset.js"
+  },
+  "engines": { "node": ">=18" }
+}

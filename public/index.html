@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Club Guesser</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Club Guesser</h1>
+      <div class="total">Score <strong id="total">0</strong></div>
+    </header>
+
+    <section id="menu">
+      <p>Players from one club are revealed one at a time. Guess the club - the fewer players you need and the faster you answer, the more you score.</p>
+      <div id="difficulty-buttons"></div>
+      <p class="muted" id="source"></p>
+    </section>
+
+    <section id="game" hidden>
+      <div class="status">
+        <span id="diff-label"></span>
+        <span>Time <strong id="timer">0</strong>s</span>
+        <span>Worth <strong id="worth">0</strong> pts</span>
+      </div>
+      <ul id="players"></ul>
+      <button id="reveal">Reveal another player (-20%)</button>
+
+      <div id="answer-area">
+        <div id="choices" hidden></div>
+        <form id="search-form" hidden autocomplete="off">
+          <input id="club-input" list="club-list" placeholder="Type a club name..." required>
+          <datalist id="club-list"></datalist>
+          <button>Guess</button>
+        </form>
+      </div>
+      <p id="message" role="status"></p>
+      <button id="give-up" class="link">Give up</button>
+    </section>
+
+    <section id="result" hidden>
+      <h2 id="result-title"></h2>
+      <p id="result-detail"></p>
+      <button id="next">Next round</button>
+      <button id="quit" class="link">Back to menu</button>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
