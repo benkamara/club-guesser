@@ -1,0 +1,11 @@
+rules_version = '2';
+// All game data is read and written by the Cloud Function via the Admin SDK,
+// which bypasses these rules. Clients must never touch Firestore directly:
+// round documents contain the answer.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

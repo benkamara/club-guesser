@@ -11,7 +11,7 @@
 // per player id in data/fame-overrides.json, e.g. { "1234": 5 }.
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { DATASET_PATH } from '../src/dataset.js';
+import { DATASET_PATH } from '../functions/src/dataset.js';
 
 const token = process.env.SPORTMONKS_API_TOKEN;
 const teamIds = (process.env.SPORTMONKS_TEAM_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -28,7 +28,7 @@ const get = async (path, include) => {
   return (await res.json()).data;
 };
 
-const overridesPath = new URL('../data/fame-overrides.json', import.meta.url);
+const overridesPath = new URL('../functions/data/fame-overrides.json', import.meta.url);
 const fame = existsSync(overridesPath) ? JSON.parse(readFileSync(overridesPath, 'utf8')) : {};
 
 const clubs = [];

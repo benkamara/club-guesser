@@ -1,0 +1,18 @@
+{
+  "hosting": {
+    "public": "public",
+    "predeploy": ["npm run sync-scoring"],
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      { "source": "/api/**", "function": { "functionId": "api", "region": "us-central1" } }
+    ]
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": ["node_modules", ".git", "*.local"]
+    }
+  ],
+  "firestore": { "rules": "firestore.rules" }
+}

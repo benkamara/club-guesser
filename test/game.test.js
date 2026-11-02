@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateScore } from '../src/scoring.js';
-import { RoundStore, createRound } from '../src/game.js';
-import { loadMockDataset } from '../src/data/mock.js';
+import { calculateScore } from '../functions/src/scoring.js';
+import { RoundStore, createRound } from '../functions/src/game.js';
+import { readFileSync } from 'node:fs';
+import { createApi } from '../functions/src/api.js';
+import { loadMockDataset } from '../functions/src/data/mock.js';
 
 const base = { difficulty: 'easy', hintsShown: 1, elapsedSeconds: 0, wrongGuesses: 0 };
 
@@ -62,34 +64,64 @@ test('full hint list never fits a second club when a disambiguator exists', () =
   assert.equal(ambiguous, 0);
 });
 
-test('store: answer is hidden until the round ends, and scoring uses server clock', () => {
+test('store: answer is hidden until the round ends, and scoring uses server clock', async () => {
   let t = 0;
   const store = new RoundStore(loadMockDataset(), { now: () => t });
-  const start = store.start('medium');
+  const start = await store.start('medium');
   assert.equal(start.hints.length, 1);
   assert.equal(JSON.stringify(start).includes('target'), false);
 
-  store.hint(start.roundId);
-  const target = store.rounds.get(start.roundId).target.id;
+  await store.hint(start.roundId);
+  const target = store.repo.rounds.get(start.roundId).target.id;
   const wrongId = store.dataset.clubs.find((c) => c.id !== target).id;
-  const w = store.guess(start.roundId, wrongId);
+  const w = await store.guess(start.roundId, wrongId);
   assert.equal(w.correct, false);
 
   t = 15_000;
-  const r = store.guess(start.roundId, target);
+  const r = await store.guess(start.roundId, target);
   // medium: 1000*1.5 * 0.8 (1 extra hint) * (1-15/45*0.6=0.8) * 0.75 (1 wrong)
   assert.equal(r.score.points, 720);
-  assert.throws(() => store.guess(start.roundId, target), /finished/);
+  await assert.rejects(store.guess(start.roundId, target), /finished/);
 });
 
-test('store: too many wrong guesses ends the round with 0 points', () => {
+test('store: too many wrong guesses ends the round with 0 points', async () => {
   const store = new RoundStore(loadMockDataset());
-  const s = store.start('easy');
-  const target = store.rounds.get(s.roundId).target.id;
+  const s = await store.start('easy');
+  const target = store.repo.rounds.get(s.roundId).target.id;
   const wrongs = s.options.filter((o) => o.id !== target);
-  store.guess(s.roundId, wrongs[0].id);
-  const last = store.guess(s.roundId, wrongs[1].id);
+  await store.guess(s.roundId, wrongs[0].id);
+  const last = await store.guess(s.roundId, wrongs[1].id);
   assert.equal(last.done, true);
   assert.equal(last.score.points, 0);
   assert.equal(last.answer.id, target);
+});
+
+test('store: cannot reveal more players than the round has', async () => {
+  const store = new RoundStore(loadMockDataset());
+  const s = await store.start('medium');
+  for (let i = 1; i < s.maxHints; i++) await store.hint(s.roundId);
+  await assert.rejects(store.hint(s.roundId), /No more players/);
+});
+
+test('api: full round over the transport-agnostic handler', async () => {
+  const ds = loadMockDataset();
+  const store = new RoundStore(ds);
+  const api = createApi(ds, store);
+
+  assert.equal((await api('GET', '/api/config')).body.clubs.length, ds.clubs.length);
+  assert.equal((await api('POST', '/api/rounds', { difficulty: 'nope' })).status, 400);
+  assert.equal((await api('POST', '/api/rounds/zzz/hint')).status, 404);
+  assert.equal((await api('GET', '/api/other')).status, 404);
+
+  const { body: round } = await api('POST', '/api/rounds', { difficulty: 'easy' });
+  assert.equal((await api('POST', `/api/rounds/${round.roundId}/guess`, {})).status, 400);
+  const target = store.repo.rounds.get(round.roundId).target.id;
+  const res = await api('POST', `/api/rounds/${round.roundId}/guess`, { clubId: target });
+  assert.equal(res.body.correct, true);
+  assert.equal((await api('POST', `/api/rounds/${round.roundId}/guess`, { clubId: target })).status, 409);
+});
+
+test('browser copy of scoring.js matches the function copy', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  assert.equal(read('../public/scoring.js'), read('../functions/src/scoring.js'));
 });

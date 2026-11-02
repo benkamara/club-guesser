@@ -77,75 +77,101 @@ export function createRound(dataset, difficulty, { rng = Math.random, exclude = 
   return { target, hints, options, difficulty, maxHints: hints.length };
 }
 
-/** Server-side round state: the answer and the clock never leave the server. */
+/**
+ * Round state lives in a repo (Firestore in production, memory in tests) because
+ * Cloud Functions instances are stateless. The answer and the clock never leave
+ * the server: clients only ever see public hint data.
+ *
+ * repo.create(round) -> id
+ * repo.update(id, fn) -> runs fn(round) atomically; fn returns { round, result }
+ */
 export class RoundStore {
-  constructor(dataset, { now = () => Date.now(), rng = Math.random } = {}) {
+  constructor(dataset, { repo = new MemoryRoundRepo(), now = () => Date.now(), rng = Math.random } = {}) {
     this.dataset = dataset;
+    this.repo = repo;
     this.now = now;
     this.rng = rng;
-    this.rounds = new Map();
-    this.nextId = 1;
   }
 
-  prune() {
-    const cutoff = this.now() - ROUND_TTL_MS;
-    for (const [id, r] of this.rounds) if (r.startedAt < cutoff) this.rounds.delete(id);
-  }
-
-  start(difficulty, exclude = []) {
-    this.prune();
+  async start(difficulty, exclude = []) {
     const round = createRound(this.dataset, difficulty, { rng: this.rng, exclude });
-    const id = String(this.nextId++);
-    this.rounds.set(id, { ...round, shown: 1, wrong: 0, done: false, startedAt: this.now() });
+    const startedAt = this.now();
+    const id = await this.repo.create({
+      difficulty,
+      target: round.target,
+      hints: round.hints.map(publicPlayer),
+      maxHints: round.maxHints,
+      shown: 1,
+      wrong: 0,
+      done: false,
+      startedAt,
+      expireAt: new Date(startedAt + ROUND_TTL_MS), // Firestore TTL policy field
+    });
+    const d = DIFFICULTIES[difficulty];
     return {
       roundId: id,
       difficulty,
-      timeLimit: DIFFICULTIES[difficulty].timeLimit,
+      timeLimit: d.timeLimit,
       maxHints: round.maxHints,
-      maxWrong: DIFFICULTIES[difficulty].maxWrong,
+      maxWrong: d.maxWrong,
       options: round.options,
       hints: [publicPlayer(round.hints[0])],
     };
   }
 
-  get(id) {
-    const r = this.rounds.get(id);
-    if (!r) throw httpError(404, 'Unknown round');
-    if (r.done) throw httpError(409, 'Round already finished');
-    return r;
-  }
-
   hint(id) {
-    const r = this.get(id);
-    if (r.shown >= r.maxHints) throw httpError(409, 'No more players to reveal');
-    r.shown += 1;
-    return { hint: publicPlayer(r.hints[r.shown - 1]), shown: r.shown };
+    return this.repo.update(id, (r) => {
+      assertOpen(r);
+      if (r.shown >= r.maxHints) throw httpError(409, 'No more players to reveal');
+      r.shown += 1;
+      return { round: r, result: { hint: r.hints[r.shown - 1], shown: r.shown } };
+    });
   }
 
   guess(id, clubId) {
-    const r = this.get(id);
-    const elapsed = (this.now() - r.startedAt) / 1000;
-    if (clubId === r.target.id) {
-      r.done = true;
-      const score = calculateScore({
-        difficulty: r.difficulty, hintsShown: r.shown, elapsedSeconds: elapsed, wrongGuesses: r.wrong,
-      });
-      return { correct: true, done: true, answer: r.target, score, elapsed };
-    }
-    r.wrong += 1;
-    const max = DIFFICULTIES[r.difficulty].maxWrong;
-    if (r.wrong >= max) {
-      r.done = true;
-      return { correct: false, done: true, answer: r.target, wrong: r.wrong, score: zeroScore() };
-    }
-    return { correct: false, done: false, wrong: r.wrong, wrongLeft: max - r.wrong };
+    return this.repo.update(id, (r) => {
+      assertOpen(r);
+      const elapsed = (this.now() - r.startedAt) / 1000;
+      if (clubId === r.target.id) {
+        r.done = true;
+        const score = calculateScore({
+          difficulty: r.difficulty, hintsShown: r.shown, elapsedSeconds: elapsed, wrongGuesses: r.wrong,
+        });
+        return { round: r, result: { correct: true, done: true, answer: r.target, score, elapsed } };
+      }
+      r.wrong += 1;
+      const max = DIFFICULTIES[r.difficulty].maxWrong;
+      if (r.wrong >= max) {
+        r.done = true;
+        return { round: r, result: { correct: false, done: true, answer: r.target, wrong: r.wrong, score: zeroScore() } };
+      }
+      return { round: r, result: { correct: false, done: false, wrong: r.wrong, wrongLeft: max - r.wrong } };
+    });
   }
 
   skip(id) {
-    const r = this.get(id);
-    r.done = true;
-    return { done: true, answer: r.target, score: zeroScore() };
+    return this.repo.update(id, (r) => {
+      assertOpen(r);
+      r.done = true;
+      return { round: r, result: { done: true, answer: r.target, score: zeroScore() } };
+    });
   }
+}
+
+export class MemoryRoundRepo {
+  constructor() { this.rounds = new Map(); this.nextId = 1; }
+  async create(round) { const id = String(this.nextId++); this.rounds.set(id, round); return id; }
+  async update(id, fn) {
+    const current = this.rounds.get(id);
+    if (!current) throw httpError(404, 'Unknown round');
+    const { round, result } = fn(structuredClone(current));
+    this.rounds.set(id, round);
+    return result;
+  }
+}
+
+function assertOpen(r) {
+  if (r.done) throw httpError(409, 'Round already finished');
 }
 
 const zeroScore = () => ({ points: 0 });
